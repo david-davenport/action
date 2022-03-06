@@ -3,6 +3,7 @@ module main
 import os
 import cli
 import flag
+import log
 
 // Create flags
 
@@ -18,7 +19,7 @@ struct ActionOptions {
     path_to_script_dir string
     args []string
     script string
-    script_args string
+    script_args []string
     rest []string
 }
 
@@ -77,19 +78,20 @@ fn list_scripts(path string) {
 
 fn find_script(path string, script string) ?string {
     // checks: file exists, is executable
-    println('files: ')
+    // println('files: ')
     mut dirs := []string{}
     mut files := os.ls(path)?
     for file in files {
         f := '$path/$file'
-        println(file)
+        // println(file)
         if os.is_dir(f) {
             dirs << f
             continue
         }
         if os.is_file(f) && file == script {
-            if os.is_executable(file) {
-                return f
+            /* return path */
+            if os.is_executable(f) {
+                return path
             } else {
                 return error('$f is not executable')
             }
@@ -103,6 +105,7 @@ fn find_script(path string, script string) ?string {
 
 fn execute_script(path string, script string, args []string) {
 	os.execvp('$path/$script', args) or {
+        eprintln("error in execvp")
 		eprintln(err)
 		exit(1)
 	}
@@ -114,8 +117,8 @@ fn parse_options(mut fp flag.FlagParser) ?&ActionOptions{
     is_interactive: fp.bool('interactive', `i`, false, 'Run interactive script picker')
     path_to_script_dir: fp.string('path', `p`, '', 'Use this path to look for the SCRIPTS directory')
     script: if fp.args.len > 0 { fp.args[0] } else { '' }
-    // script_args: fp.remaining_parameters()?[1..]
-    rest: fp.finalize() or { [] }
+    script_args: fp.remaining_parameters()[1..]
+    //rest: fp.finalize() or { [] }
     }
 }
 
@@ -128,22 +131,30 @@ fn main() {
     fp.arguments_description("[SCRIPT [...ARGS]")
     fp.skip_executable()
 
-    println("FlagParser: $fp")
     mut a := &Action{
         opts: parse_options(mut fp) or {
             eprintln(err)
             exit(1)
         }
+        cwd: cwd
     }
-    println("Action: $a")
     if os.args.len < 2 {
         eprintln(fp.usage())
         exit(1)
     }
 
-    println("path_to_script_dir: ${a.opts.path_to_script_dir}")
-    println("script: ${a.opts.script}")
-    println("rest: ${a.opts.rest}")
+    mut logger := log.Log{}
+    if a.opts.is_verbose {
+        logger.set_level(.debug)
+    } else {
+        logger.set_level(.info)
+    }
+
+    logger.debug("FlagParser: $fp")
+    logger.debug("Action: $a")
+    logger.debug("path_to_script_dir: ${a.opts.path_to_script_dir}")
+    logger.debug("script: ${a.opts.script}")
+    logger.debug("rest: ${a.opts.rest}")
 
     // TODO: There has got to be a better way to do this, but that's a
     // problem for tomorrow
@@ -151,24 +162,26 @@ fn main() {
 	scripts_path = a.opts.path_to_script_dir
 	if scripts_path == '' {
 		scripts_path = find_scripts_dir(cwd, 'scripts') or {
-			eprintln(err)
+			logger.send_output(err.str(), .error)
 			exit(1)
 		}
-	}
+	} else if !os.is_abs_path(scripts_path) {
+        scripts_path = os.real_path(scripts_path)
+    }
 
     /* If we reach this point, we should have a path to a script
      * directory. If a specific script has been provided, call it,
      * otherwise list the scripts in the directory
      */
-	println(scripts_path)
+	logger.debug(scripts_path)
     if a.opts.script != '' {
         // walk scripts dir to find script
         full_path_to_script_exe := find_script(scripts_path, a.opts.script) or {
             eprintln(err)
             exit(1)
         }
-        //execute_script(full_path_to_script_exe, a.opts.script, a.opts.script_args)
-        println(full_path_to_script_exe)
+        logger.debug('full path to script $full_path_to_script_exe')
+        execute_script(full_path_to_script_exe, a.opts.script, a.opts.script_args)
     } else {
         list_scripts(scripts_path)
     }
